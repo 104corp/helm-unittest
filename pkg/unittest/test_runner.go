@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/helm-unittest/helm-unittest/internal/printer"
+	"github.com/helm-unittest/helm-unittest/pkg/unittest/coverage"
 	"github.com/helm-unittest/helm-unittest/pkg/unittest/formatter"
 	"github.com/helm-unittest/helm-unittest/pkg/unittest/results"
 	"github.com/helm-unittest/helm-unittest/pkg/unittest/snapshot"
@@ -73,6 +74,8 @@ type TestRunner struct {
 	chartCounting    testUnitCounting
 	snapshotCounting totalSnapshotCounting
 	testResults      []*results.TestSuiteResult
+	Coverage         bool
+	coverageResults  []*coverage.ResultMap
 }
 
 // RunV3 test suites in chart in ChartPaths.
@@ -102,18 +105,28 @@ func (tr *TestRunner) RunV3(ChartPaths []string) bool {
 			continue
 		}
 
-		tr.printChartHeader(chart.Name(), chartPath)
-		chartPassed := tr.runV3SuitesOfChart(testSuites, chartPath)
+		if tr.Coverage {
+			tr.runV3SuitesOfChartCoverage(testSuites, chartPath)
+		} else {
+			tr.printChartHeader(chart.Name(), chartPath)
+			chartPassed := tr.runV3SuitesOfChart(testSuites, chartPath)
 
-		tr.countChart(chartPassed, nil)
-		allPassed = allPassed && chartPassed
+			tr.countChart(chartPassed, nil)
+			allPassed = allPassed && chartPassed
+		}
 	}
-	err := tr.writeTestOutput()
-	if err != nil {
-		tr.printErroredChartHeader(err)
+
+	if tr.Coverage {
+		tr.printCoverage()
+	} else {
+		err := tr.writeTestOutput()
+		if err != nil {
+			tr.printErroredChartHeader(err)
+		}
+		tr.printSnapshotSummary()
+		tr.printSummary(time.Since(start))
 	}
-	tr.printSnapshotSummary()
-	tr.printSummary(time.Since(start))
+
 	return allPassed
 }
 
@@ -351,4 +364,21 @@ func (tr *TestRunner) writeTestOutput() error {
 	}
 
 	return nil
+}
+
+func (tr *TestRunner) runV3SuitesOfChartCoverage(suites []*TestSuite, chartPath string) {
+	for _, suite := range suites {
+		result := suite.runV3TestJobsCoverage(chartPath)
+		tr.coverageResults = append(tr.coverageResults, result...)
+	}
+}
+
+// printCoverage print coverage report
+func (tr *TestRunner) printCoverage() {
+	var results []coverage.ResultMap
+	for _, result := range tr.coverageResults {
+		results = append(results, *result)
+	}
+	reporter := coverage.NewCoverageReporter(results)
+	reporter.Generate()
 }

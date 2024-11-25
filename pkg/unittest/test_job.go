@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/helm-unittest/helm-unittest/internal/common"
+	"github.com/helm-unittest/helm-unittest/pkg/unittest/coverage"
 	"github.com/helm-unittest/helm-unittest/pkg/unittest/results"
 	"github.com/helm-unittest/helm-unittest/pkg/unittest/snapshot"
 	"github.com/helm-unittest/helm-unittest/pkg/unittest/validators"
@@ -618,4 +619,95 @@ func convertIToString(val interface{}) string {
 	default:
 		return ""
 	}
+}
+
+// RunV3Coverage render the chart and run coverage in TestJob.
+func (t *TestJob) RunV3Coverage(targetChart *v3chart.Chart) *coverage.ResultMap {
+	userValues, err := t.getUserValues()
+	if err != nil {
+		panic(err)
+	}
+
+	outputOfFiles, _, _ := t.renderV3ChartForCoverage(targetChart, userValues)
+	resultMap := make(coverage.ResultMap)
+	for k, v := range outputOfFiles {
+		resultEntry := coverage.NewTemplateResult(k)
+		if err := resultEntry.Extract(v); err != nil {
+			resultEntry.Actions = []int{0}
+			resultEntry.Branches = []int{1}
+			resultEntry.Loops = []int{0}
+		}
+		resultMap[k] = *resultEntry
+	}
+
+	return &resultMap
+}
+
+// render the chart and return result map
+func (t *TestJob) renderV3ChartForCoverage(targetChart *v3chart.Chart, userValues []byte) (map[string]string, bool, error) {
+	values, err := v3util.ReadValues(userValues)
+	if err != nil {
+		return nil, false, err
+	}
+	options := *t.releaseV3Option()
+
+	// Check Release Name length
+	if t.Release.Name != "" {
+		err = v3util.ValidateReleaseName(t.Release.Name)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+
+	err = v3util.ProcessDependenciesWithMerge(targetChart, values)
+	if err != nil {
+		return nil, false, err
+	}
+
+	vals, err := v3util.ToRenderValuesWithSchemaValidation(targetChart, values.AsMap(), options, t.capabilitiesV3(), false)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// When defaultTemplatesToAssert is empty, ensure all templates will be validated.
+	if len(t.defaultTemplatesToAssert) == 0 {
+		// Set all files
+		t.defaultTemplatesToAssert = []string{multiWildcard}
+	}
+
+	// Filter the files that needs to be validated
+	filteredChart := CopyV3Chart(t.chartRoute, targetChart.Name(), t.defaultTemplatesToAssert, targetChart)
+
+	// add instrumentation before render
+	for _, t := range filteredChart.Templates {
+		if strings.HasSuffix(t.Name, "tpl") {
+			continue
+		}
+		insertionStrategy := &coverage.TreeStrategy{}
+		instrumenter := coverage.NewInstrumenter(insertionStrategy, t.Data)
+		newData, err := instrumenter.Transform()
+		if err != nil {
+			panic(err)
+		}
+		// fmt.Println(t.Name+":", string(newData))
+		t.Data = newData
+	}
+
+	var outputOfFiles map[string]string
+
+	// modify chart metadata before rendering
+	t.ModifyChartMetadata(targetChart)
+	if len(t.KubernetesProvider.Objects) > 0 {
+		outputOfFiles, err = v3engine.RenderWithClientProvider(filteredChart, vals, &t.KubernetesProvider)
+	} else {
+		outputOfFiles, err = v3engine.Render(filteredChart, vals)
+	}
+
+	var renderSucceed bool
+	outputOfFiles, renderSucceed, err = t.translateErrorToOutputFiles(err, outputOfFiles)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return outputOfFiles, renderSucceed, nil
 }

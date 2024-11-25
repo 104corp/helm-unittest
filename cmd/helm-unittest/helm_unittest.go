@@ -26,6 +26,7 @@ type testOptions struct {
 	outputFile     string
 	outputType     string
 	chartTestsPath string
+	coverage       bool
 }
 
 var defaultFilePattern = filepath.Join("tests", "*_test.yaml")
@@ -102,6 +103,7 @@ func RunPlugin(cmd *cobra.Command, chartPaths []string) {
 		OutputFile:     testConfig.outputFile,
 		ChartTestsPath: testConfig.chartTestsPath,
 		RenderPath:     renderPath,
+		Coverage:       testConfig.coverage,
 	}
 
 	log.SetFormatter(&log.TextFormatter{
@@ -182,6 +184,11 @@ func InitPluginFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().BoolVarP(
 		&testConfig.debugLogging, "debugPlugin", "d", false,
 		"enable verbose output",
+	)
+
+	cmd.PersistentFlags().BoolVarP(
+		&testConfig.coverage, "coverage", "c", false,
+		"enable coverage report",
 	)
 }
 

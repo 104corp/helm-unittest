@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"github.com/helm-unittest/helm-unittest/pkg/unittest/coverage"
 	"io"
 	"os"
 	"path/filepath"
@@ -371,4 +372,20 @@ func (s *TestSuite) SnapshotFileUrl() string {
 		return fmt.Sprintf("%s_%s", s.definitionFile, s.SnapshotId)
 	}
 	return s.definitionFile
+}
+
+func (s *TestSuite) runV3TestJobsCoverage(chartPath string) []*coverage.ResultMap {
+	s.polishTestJobsPathInfo()
+	jobResults := make([]*coverage.ResultMap, len(s.Tests))
+
+	for idx, testJob := range s.Tests {
+		// (Re)load the chart used by this suite (with logging temporarily disabled)
+		log.SetOutput(io.Discard)
+		chart, _ := v3loader.Load(chartPath)
+		log.SetOutput(os.Stdout)
+
+		jobResult := testJob.RunV3Coverage(chart)
+		jobResults[idx] = jobResult
+	}
+	return jobResults
 }
